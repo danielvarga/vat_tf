@@ -36,22 +36,26 @@ def get_normalized_vector(d):
     return d
 
 
-def generate_virtual_adversarial_perturbation(x, logit, is_training=True):
-    d = tf.random_normal(shape=tf.shape(x))
+# u is normalized adversarial perturbation
+# returns an improved normalized adversarial perturbation
+def generate_virtual_adversarial_perturbation(x, u, logit, is_training=True):
+    d = u
 
     for _ in range(FLAGS.num_power_iterations):
-        d = FLAGS.xi * get_normalized_vector(d)
+        d = FLAGS.xi * d
         logit_p = logit
         logit_m = forward(x + d, update_batch_stats=False, is_training=is_training)
+        # TODO use L2 instead
         dist = L.kl_divergence_with_logit(logit_p, logit_m)
         grad = tf.gradients(dist, [d], aggregation_method=2)[0]
         d = tf.stop_gradient(grad)
+        d = get_normalized_vector(d)
 
-    return FLAGS.epsilon * get_normalized_vector(d)
+    return d
 
 
-def virtual_adversarial_loss(x, logit, is_training=True, name="vat_loss"):
-    r_vadv = generate_virtual_adversarial_perturbation(x, logit, is_training=is_training)
+def virtual_adversarial_loss(x, u, logit, is_training=True, name="vat_loss"):
+    r_vadv = FLAGS.epsilon * generate_virtual_adversarial_perturbation(x, u, logit, is_training=is_training)
     logit = tf.stop_gradient(logit)
     logit_p = logit
     logit_m = forward(x + r_vadv, update_batch_stats=False, is_training=is_training)

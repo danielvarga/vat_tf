@@ -41,7 +41,7 @@ else:
 NUM_EVAL_EXAMPLES = 5000
 
 
-def build_training_graph(x, y, ul_x, lr, mom):
+def build_training_graph(x, y, ul_x, ul_u, lr, mom):
     global_step = tf.get_variable(
         name="global_step",
         shape=[],
@@ -54,11 +54,11 @@ def build_training_graph(x, y, ul_x, lr, mom):
     with tf.variable_scope(tf.get_variable_scope(), reuse=True):
         if FLAGS.method == 'vat':
             ul_logit = vat.forward(ul_x, is_training=True, update_batch_stats=False)
-            vat_loss = vat.virtual_adversarial_loss(ul_x, ul_logit)
+            vat_loss = vat.virtual_adversarial_loss(ul_x, ul_u, ul_logit)
             additional_loss = vat_loss
         elif FLAGS.method == 'vatent':
             ul_logit = vat.forward(ul_x, is_training=True, update_batch_stats=False)
-            vat_loss = vat.virtual_adversarial_loss(ul_x, ul_logit)
+            vat_loss = vat.virtual_adversarial_loss(ul_x, ul_u, ul_logit)
             ent_loss = L.entropy_y_x(ul_logit)
             additional_loss = vat_loss + ent_loss
         elif FLAGS.method == 'baseline':
@@ -74,7 +74,7 @@ def build_training_graph(x, y, ul_x, lr, mom):
     return loss, train_op, global_step
 
 
-def build_eval_graph(x, y, ul_x):
+def build_eval_graph(x, y, ul_x, ul_u):
     losses = {}
     logit = vat.forward(x, is_training=False, update_batch_stats=False)
     nll_loss = L.ce_loss(logit, y)
@@ -86,7 +86,7 @@ def build_eval_graph(x, y, ul_x):
     at_loss = vat.adversarial_loss(x, y, nll_loss, is_training=False)
     losses['AT_loss'] = at_loss
     ul_logit = vat.forward(ul_x, is_training=False, update_batch_stats=False)
-    vat_loss = vat.virtual_adversarial_loss(ul_x, ul_logit, is_training=False)
+    vat_loss = vat.virtual_adversarial_loss(ul_x, ul_u, ul_logit, is_training=False)
     losses['VAT_loss'] = vat_loss
     return losses
 
@@ -118,16 +118,30 @@ def main(_):
                                                         validation=FLAGS.validation,
                                                         shuffle=True)
 
+            def random_sphere(shape):
+                n = tf.random_normal(shape=shape, dtype=tf.float32)
+                n = tf.reshape(n, shape=(int(shape[0]), -1))
+                n = tf.nn.l2_normalize(n, dim=1)
+                n = tf.reshape(n, shape)
+                return n
+                # n = numpy.random.normal(size=shape)
+                # return n / tf.norm(n.reshape((n.shape[0], -1)), axis=1).reshape(n.shape[0], 1, 1, 1)
+
+            print(ul_images.shape)
+            ul_u = random_sphere(ul_images.shape)
+            ul_u_eval_train = random_sphere(ul_images_eval_train.shape)
+            ul_u_eval_test = random_sphere(images_eval_test.shape)
+
         with tf.device(FLAGS.device):
             lr = tf.placeholder(tf.float32, shape=[], name="learning_rate")
             mom = tf.placeholder(tf.float32, shape=[], name="momentum")
             with tf.variable_scope("CNN") as scope:
                 # Build training graph
-                loss, train_op, global_step = build_training_graph(images, labels, ul_images, lr, mom)
+                loss, train_op, global_step = build_training_graph(images, labels, ul_images, ul_u, lr, mom)
                 scope.reuse_variables()
                 # Build eval graph
-                losses_eval_train = build_eval_graph(images_eval_train, labels_eval_train, ul_images_eval_train)
-                losses_eval_test = build_eval_graph(images_eval_test, labels_eval_test, images_eval_test)
+                losses_eval_train = build_eval_graph(images_eval_train, labels_eval_train, ul_images_eval_train, ul_u_eval_train)
+                losses_eval_test = build_eval_graph(images_eval_test, labels_eval_test, images_eval_test, ul_u_eval_test)
 
             init_op = tf.global_variables_initializer()
 
@@ -154,6 +168,8 @@ def main(_):
 
         print("Training...")
         with sv.managed_session() as sess:
+            print(images.eval(session=sess).shape)
+            sys.exit()
             for ep in range(FLAGS.num_epochs):
                 if sv.should_stop():
                     break
