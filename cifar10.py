@@ -104,6 +104,8 @@ def load_cifar10():
         (NUM_EXAMPLES_TRAIN, 3, 32, 32)).transpose((0, 2, 3, 1)).reshape((NUM_EXAMPLES_TRAIN, -1))
     test_images = test_images.reshape(
         (NUM_EXAMPLES_TEST, 3, 32, 32)).transpose((0, 2, 3, 1)).reshape((NUM_EXAMPLES_TEST, -1))
+    np.save(open("train_images.npy", "wb"), train_images)
+    np.save(open("test_images.npy", "wb"), test_images)
     return (train_images, train_labels), (test_images, test_labels)
 
 
@@ -205,6 +207,23 @@ def unlabeled_inputs(batch_size=100,
     image, label = read(filename_queue)
     image = transform(tf.cast(image, tf.float32))
     return generate_batch([image], num_examples, batch_size, shuffle)
+
+
+def unlabeled_inputs_numpy():
+    with tf.Session() as sess:
+        filename_queue = tf.train.string_input_producer(["unlabeled_train.tfrecords"])
+        image, label, height, width, depth = read_and_decode(filename_queue)
+        image = tf.reshape(image, tf.pack([height, width, 3]))
+        image.set_shape([32,32,3])
+        init_op = tf.initialize_all_variables()
+        sess.run(init_op)
+        coord = tf.train.Coordinator()
+        threads = tf.train.start_queue_runners(coord=coord)
+        for i in range(1000):
+            example, l = sess.run([image, label])
+            print (example,l)
+        coord.request_stop()
+        coord.join(threads)
 
 
 def main(argv):

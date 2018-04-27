@@ -1,6 +1,6 @@
 import time
 
-import numpy
+import numpy as np
 import tensorflow as tf
 
 import layers as L
@@ -54,11 +54,11 @@ def build_training_graph(x, y, ul_x, ul_u, lr, mom):
     with tf.variable_scope(tf.get_variable_scope(), reuse=True):
         if FLAGS.method == 'vat':
             ul_logit = vat.forward(ul_x, is_training=True, update_batch_stats=False)
-            vat_loss = vat.virtual_adversarial_loss(ul_x, ul_u, ul_logit)
+            vat_loss, ul_u_updated = vat.virtual_adversarial_loss(ul_x, ul_u, ul_logit)
             additional_loss = vat_loss
         elif FLAGS.method == 'vatent':
             ul_logit = vat.forward(ul_x, is_training=True, update_batch_stats=False)
-            vat_loss = vat.virtual_adversarial_loss(ul_x, ul_u, ul_logit)
+            vat_loss, ul_u_updated = vat.virtual_adversarial_loss(ul_x, ul_u, ul_logit)
             ent_loss = L.entropy_y_x(ul_logit)
             additional_loss = vat_loss + ent_loss
         elif FLAGS.method == 'baseline':
@@ -71,7 +71,7 @@ def build_training_graph(x, y, ul_x, ul_u, lr, mom):
     tvars = tf.trainable_variables()
     grads_and_vars = opt.compute_gradients(loss, tvars)
     train_op = opt.apply_gradients(grads_and_vars, global_step=global_step)
-    return loss, train_op, global_step
+    return loss, train_op, global_step, ul_u_updated
 
 
 def build_eval_graph(x, y, ul_x, ul_u):
@@ -93,17 +93,18 @@ def build_eval_graph(x, y, ul_x, ul_u):
 
 def main(_):
     print(FLAGS.epsilon, FLAGS.top_bn)
-    numpy.random.seed(seed=FLAGS.seed)
-    tf.set_random_seed(numpy.random.randint(1234))
+    np.random.seed(seed=FLAGS.seed)
+    tf.set_random_seed(np.random.randint(1234))
     with tf.Graph().as_default() as g:
         with tf.device("/cpu:0"):
             images, labels = inputs(batch_size=FLAGS.batch_size,
                                     train=True,
                                     validation=FLAGS.validation,
                                     shuffle=True)
-            ul_images = unlabeled_inputs(batch_size=FLAGS.ul_batch_size,
+            ul_images = tf.placeholder(shape=images.shape, dtype=tf.float32)
+            '''unlabeled_inputs(batch_size=FLAGS.ul_batch_size,
                                          validation=FLAGS.validation,
-                                         shuffle=True)
+                                         shuffle=True)'''
 
             images_eval_train, labels_eval_train = inputs(batch_size=FLAGS.eval_batch_size,
                                                           train=True,
@@ -118,26 +119,36 @@ def main(_):
                                                         validation=FLAGS.validation,
                                                         shuffle=True)
 
+            def placeholder_like(x, name=None):
+                return tf.placeholder(shape=x.shape, dtype=tf.float32, name=name)
+
             def random_sphere(shape):
                 n = tf.random_normal(shape=shape, dtype=tf.float32)
                 n = tf.reshape(n, shape=(int(shape[0]), -1))
                 n = tf.nn.l2_normalize(n, dim=1)
                 n = tf.reshape(n, shape)
                 return n
-                # n = numpy.random.normal(size=shape)
-                # return n / tf.norm(n.reshape((n.shape[0], -1)), axis=1).reshape(n.shape[0], 1, 1, 1)
+
+            def random_sphere_numpy(shape):
+                n = np.random.normal(size=shape)
+                proj_shape = tuple([n.shape[0]] + [1 for _ in range(len(shape) - 1)])
+                return n / np.linalg.norm(n.reshape((n.shape[0], -1)), axis=1).reshape(proj_shape)
 
             print(ul_images.shape)
-            ul_u = random_sphere(ul_images.shape)
-            ul_u_eval_train = random_sphere(ul_images_eval_train.shape)
-            ul_u_eval_test = random_sphere(images_eval_test.shape)
+            # ul_u = random_sphere(ul_images.shape)
+            # ul_u_eval_train = random_sphere(ul_images_eval_train.shape)
+            # ul_u_eval_test = random_sphere(images_eval_test.shape)
+            ul_u = placeholder_like(ul_images, "ul_u")
+            ul_u_eval_train = placeholder_like(ul_images_eval_train, "ul_u_eval_train")
+            ul_u_eval_test =  placeholder_like(images_eval_test, "ul_u_eval_test")
 
         with tf.device(FLAGS.device):
             lr = tf.placeholder(tf.float32, shape=[], name="learning_rate")
             mom = tf.placeholder(tf.float32, shape=[], name="momentum")
             with tf.variable_scope("CNN") as scope:
                 # Build training graph
-                loss, train_op, global_step = build_training_graph(images, labels, ul_images, ul_u, lr, mom)
+                loss, train_op, global_step, ul_u_updated = build_training_graph(
+                                                                images, labels, ul_images, ul_u, lr, mom)
                 scope.reuse_variables()
                 # Build eval graph
                 losses_eval_train = build_eval_graph(images_eval_train, labels_eval_train, ul_images_eval_train, ul_u_eval_train)
@@ -166,10 +177,14 @@ def main(_):
             summary_writer=None,
             save_model_secs=150, recovery_wait_secs=0)
 
+        ul_images_np = np.load("train_images.npy").reshape((-1, 32, 32, 3))
+        print("TRUNCATING UL DATA")
+        ul_images_np = ul_images_np[:64]
+        ul_u_np = random_sphere_numpy(ul_images_np.shape)
+        print(ul_images_np.shape, ul_u_np.shape)
+
         print("Training...")
         with sv.managed_session() as sess:
-            print(images.eval(session=sess).shape)
-            sys.exit()
             for ep in range(FLAGS.num_epochs):
                 if sv.should_stop():
                     break
@@ -184,8 +199,13 @@ def main(_):
                 sum_loss = 0
                 start = time.time()
                 for i in range(FLAGS.num_iter_per_epoch):
-                    _, batch_loss, _ = sess.run([train_op, loss, global_step],
+                    picked = np.random.choice(len(ul_images_np), size=FLAGS.batch_size, replace=False)
+                    feed_dict[ul_images] = ul_images_np[picked]
+                    feed_dict[ul_u] = ul_u_np[picked]
+                    _, batch_loss, _, ul_u_updated_np = sess.run([train_op, loss, global_step, ul_u_updated],
                                                 feed_dict=feed_dict)
+                    print(np.linalg.norm(ul_u_updated_np - ul_u_np[picked]), np.linalg.norm(ul_u_updated_np))
+                    ul_u_np[picked] = ul_u_updated_np
                     sum_loss += batch_loss
                 end = time.time()
                 print("Epoch:", ep, "CE_loss_train:", sum_loss / FLAGS.num_iter_per_epoch, "elapsed_time:", end - start)
@@ -193,12 +213,13 @@ def main(_):
                 if (ep + 1) % FLAGS.eval_freq == 0 or ep + 1 == FLAGS.num_epochs:
                     # Eval on training data
                     act_values_dict = {}
+                    feed_dict = {ul_u_eval_train: random_sphere_numpy(ul_u_eval_train.shape)}
                     for key, _ in losses_eval_train.iteritems():
                         act_values_dict[key] = 0
                     n_iter_per_epoch = NUM_EVAL_EXAMPLES / FLAGS.eval_batch_size
                     for i in range(n_iter_per_epoch):
                         values = losses_eval_train.values()
-                        act_values = sess.run(values)
+                        act_values = sess.run(values, feed_dict=feed_dict)
                         for key, value in zip(act_values_dict.keys(), act_values):
                             act_values_dict[key] += value
                     summary = tf.Summary()
@@ -211,12 +232,14 @@ def main(_):
 
                     # Eval on test data
                     act_values_dict = {}
+                    print("HOW COME THIS DOES NOT DEPEND ON ul_images_eval_train? SOMETHING'S WRONG HERE.")
+                    feed_dict = {ul_u_eval_test: random_sphere_numpy(ul_u_eval_test.shape)}
                     for key, _ in losses_eval_test.iteritems():
                         act_values_dict[key] = 0
                     n_iter_per_epoch = NUM_EVAL_EXAMPLES / FLAGS.eval_batch_size
                     for i in range(n_iter_per_epoch):
                         values = losses_eval_test.values()
-                        act_values = sess.run(values)
+                        act_values = sess.run(values, feed_dict=feed_dict)
                         for key, value in zip(act_values_dict.keys(), act_values):
                             act_values_dict[key] += value
                     summary = tf.Summary()

@@ -45,7 +45,7 @@ def generate_virtual_adversarial_perturbation(x, u, logit, is_training=True):
         d = FLAGS.xi * d
         logit_p = logit
         logit_m = forward(x + d, update_batch_stats=False, is_training=is_training)
-        # TODO use L2 instead
+        # TODO use L2 instead. not just here but in virtual_adversarial_loss
         dist = L.kl_divergence_with_logit(logit_p, logit_m)
         grad = tf.gradients(dist, [d], aggregation_method=2)[0]
         d = tf.stop_gradient(grad)
@@ -55,12 +55,12 @@ def generate_virtual_adversarial_perturbation(x, u, logit, is_training=True):
 
 
 def virtual_adversarial_loss(x, u, logit, is_training=True, name="vat_loss"):
-    r_vadv = FLAGS.epsilon * generate_virtual_adversarial_perturbation(x, u, logit, is_training=is_training)
+    u_prime = generate_virtual_adversarial_perturbation(x, u, logit, is_training=is_training)
     logit = tf.stop_gradient(logit)
     logit_p = logit
-    logit_m = forward(x + r_vadv, update_batch_stats=False, is_training=is_training)
+    logit_m = forward(x + FLAGS.epsilon * u_prime, update_batch_stats=False, is_training=is_training)
     loss = L.kl_divergence_with_logit(logit_p, logit_m)
-    return tf.identity(loss, name=name)
+    return tf.identity(loss, name=name), u_prime
 
 
 def generate_adversarial_perturbation(x, loss):
