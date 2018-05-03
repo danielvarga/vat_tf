@@ -83,8 +83,8 @@ def build_eval_graph(x, y, ul_x, ul_u):
     losses['Acc'] = acc
     scope = tf.get_variable_scope()
     scope.reuse_variables()
-    at_loss = vat.adversarial_loss(x, y, nll_loss, is_training=False)
-    losses['AT_loss'] = at_loss
+    # at_loss = vat.adversarial_loss(x, y, nll_loss, is_training=False)
+    # losses['AT_loss'] = at_loss
     ul_logit = vat.forward(ul_x, is_training=False, update_batch_stats=False)
     vat_loss = vat.virtual_adversarial_loss(ul_x, ul_u, ul_logit, is_training=False)
     losses['VAT_loss'] = vat_loss
@@ -179,7 +179,7 @@ def main(_):
 
         ul_images_np = np.load("train_images.npy").reshape((-1, 32, 32, 3))
         print("TRUNCATING UL DATA")
-        ul_images_np = ul_images_np[:64]
+        ul_images_np = ul_images_np[:FLAGS.batch_size]
         ul_u_np = random_sphere_numpy(ul_images_np.shape)
         print(ul_images_np.shape, ul_u_np.shape)
 
@@ -199,12 +199,16 @@ def main(_):
                 sum_loss = 0
                 start = time.time()
                 for i in range(FLAGS.num_iter_per_epoch):
-                    picked = np.random.choice(len(ul_images_np), size=FLAGS.batch_size, replace=False)
+                    picked = range(FLAGS.batch_size) # np.random.choice(len(ul_images_np), size=FLAGS.batch_size, replace=False)
                     feed_dict[ul_images] = ul_images_np[picked]
                     feed_dict[ul_u] = ul_u_np[picked]
-                    _, batch_loss, _, ul_u_updated_np = sess.run([train_op, loss, global_step, ul_u_updated],
+                    ul_u_updated_np, _, batch_loss, _ = sess.run([ul_u_updated, train_op, loss, global_step],
                                                 feed_dict=feed_dict)
-                    print(np.linalg.norm(ul_u_updated_np - ul_u_np[picked]), np.linalg.norm(ul_u_updated_np))
+                    delta = ul_u_updated_np - ul_u_np[picked]
+                    # print("pos", ul_u_updated_np.reshape((FLAGS.batch_size, -1))[0, :4])
+                    # print("delta", np.linalg.norm(delta.reshape((FLAGS.batch_size, -1)), axis=1)[:4])
+                    if i==0:
+                        print(np.linalg.norm(ul_u_updated_np - ul_u_np[picked]), ul_u_updated_np.reshape((FLAGS.batch_size, -1))[0, :3])
                     ul_u_np[picked] = ul_u_updated_np
                     sum_loss += batch_loss
                 end = time.time()

@@ -64,12 +64,14 @@ def virtual_adversarial_loss(x, u, logit, is_training=True, name="vat_loss"):
 
 
 def generate_adversarial_perturbation(x, loss):
+    raise "don't go here"
     grad = tf.gradients(loss, [x], aggregation_method=2)[0]
     grad = tf.stop_gradient(grad)
     return FLAGS.epsilon * get_normalized_vector(grad)
 
 
 def adversarial_loss(x, y, loss, is_training=True, name="at_loss"):
+    raise "don't go here"
     r_adv = generate_adversarial_perturbation(x, loss)
     logit = forward(x + r_adv, is_training=is_training, update_batch_stats=False)
     loss = L.ce_loss(logit, y)
