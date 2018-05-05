@@ -7,7 +7,7 @@ import cnn
 
 FLAGS = tf.app.flags.FLAGS
 
-tf.app.flags.DEFINE_float('epsilon', 8.0, "norm length for (virtual) adversarial training ")
+tf.app.flags.DEFINE_float('epsilon', 1e-6, "norm length for (virtual) adversarial training ")
 tf.app.flags.DEFINE_integer('num_power_iterations', 1, "the number of power iterations")
 tf.app.flags.DEFINE_float('xi', 1e-6, "small constant for finite difference")
 
@@ -59,7 +59,7 @@ def virtual_adversarial_loss(x, u, logit, is_training=True, name="vat_loss"):
     logit = tf.stop_gradient(logit)
     logit_p = logit
     logit_m = forward(x + FLAGS.epsilon * u_prime, update_batch_stats=False, is_training=is_training)
-    loss = L.kl_divergence_with_logit(logit_p, logit_m)
+    loss = L.kl_divergence_with_logit(logit_p, logit_m) / FLAGS.epsilon
     return tf.identity(loss, name=name), u_prime
 
 

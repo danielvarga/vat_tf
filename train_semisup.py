@@ -207,8 +207,7 @@ def main(_):
                     delta = ul_u_updated_np - ul_u_np[picked]
                     # print("pos", ul_u_updated_np.reshape((FLAGS.batch_size, -1))[0, :4])
                     # print("delta", np.linalg.norm(delta.reshape((FLAGS.batch_size, -1)), axis=1)[:4])
-                    if i==0:
-                        print(np.linalg.norm(ul_u_updated_np - ul_u_np[picked]), ul_u_updated_np.reshape((FLAGS.batch_size, -1))[0, :3])
+                    print(np.linalg.norm(ul_u_updated_np - ul_u_np[picked]), ul_u_updated_np.reshape((FLAGS.batch_size, -1))[0, :3])
                     ul_u_np[picked] = ul_u_updated_np
                     sum_loss += batch_loss
                 end = time.time()
